@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var requestTimeout = 300 * time.Millisecond
+var requestTimeout = 400 * time.Millisecond
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)

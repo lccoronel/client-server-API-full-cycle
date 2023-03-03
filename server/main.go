@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -33,8 +34,8 @@ type Exchange struct {
 	UsdBrl Rate
 }
 
-var getCurrentRateTimeout = 200 * time.Millisecond
-var saveRateInDatabaseTimeout = 10 * time.Millisecond
+var getCurrentRateTimeout = 200 * time.Nanosecond
+var saveRateInDatabaseTimeout = 100 * time.Millisecond
 var lock = &sync.Mutex{}
 var databaseInstance *gorm.DB
 
@@ -79,7 +80,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Request Error", http.StatusInternalServerError)
 	}
 
-	insertRate(ctx, &exchange.UsdBrl)
+	err = insertRate(ctx, &exchange.UsdBrl)
+	if err != nil {
+		http.Error(w, "Request Error", http.StatusInternalServerError)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		log.Println("Request Cancelled")
+		return
+	}
 
 	w.Write([]byte(exchange.UsdBrl.Bid))
 
@@ -89,7 +98,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	case <-ctx.Done():
 		log.Println("Request Cancelled")
-		http.Error(w, "Request Cancelled", http.StatusInternalServerError)
 	}
 }
 
@@ -117,10 +125,20 @@ func getCurrentRate(ctx context.Context) (Exchange, error) {
 
 	json.Unmarshal(responseJson, &exchange)
 
-	return exchange, nil
+	if ctx.Done() != nil {
+		return exchange, ctx.Err()
+	}
+
+	select {
+	case <-time.After(getCurrentRateTimeout):
+		return exchange, nil
+
+	case <-ctx.Done():
+		return exchange, ctx.Err()
+	}
 }
 
-func insertRate(ctx context.Context, rate *Rate) {
+func insertRate(ctx context.Context, rate *Rate) error {
 	ctx, cancel := context.WithTimeout(ctx, saveRateInDatabaseTimeout)
 	defer cancel()
 
@@ -140,4 +158,11 @@ func insertRate(ctx context.Context, rate *Rate) {
 		Timestamp:   rate.Timestamp,
 		Create_date: rate.Create_date,
 	})
+
+	if ctx.Done() != nil {
+		return ctx.Err()
+	}
+
+	return nil
+
 }
