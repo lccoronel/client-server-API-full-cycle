@@ -125,10 +125,6 @@ func getCurrentRate(ctx context.Context) (Exchange, error) {
 
 	json.Unmarshal(responseJson, &exchange)
 
-	if ctx.Done() != nil {
-		return exchange, ctx.Err()
-	}
-
 	select {
 	case <-time.After(getCurrentRateTimeout):
 		return exchange, nil
