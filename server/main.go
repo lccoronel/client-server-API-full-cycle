@@ -34,7 +34,7 @@ type Exchange struct {
 	UsdBrl Rate
 }
 
-var getCurrentRateTimeout = 200 * time.Nanosecond
+var getCurrentRateTimeout = 200 * time.Millisecond
 var saveRateInDatabaseTimeout = 100 * time.Millisecond
 var lock = &sync.Mutex{}
 var databaseInstance *gorm.DB
@@ -80,6 +80,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Request Error", http.StatusInternalServerError)
 	}
 
+	if errors.Is(err, context.DeadlineExceeded) {
+		log.Println("Request Cancelled")
+		return
+	}
+
 	err = insertRate(ctx, &exchange.UsdBrl)
 	if err != nil {
 		http.Error(w, "Request Error", http.StatusInternalServerError)
@@ -101,7 +106,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getCurrentRate(ctx context.Context) (Exchange, error) {
+func getCurrentRate(ctx context.Context) (*Exchange, error) {
 	ctx, cancel := context.WithTimeout(ctx, getCurrentRateTimeout)
 	defer cancel()
 
@@ -109,29 +114,23 @@ func getCurrentRate(ctx context.Context) (Exchange, error) {
 
 	request, err := http.NewRequestWithContext(ctx, "GET", "https://economia.awesomeapi.com.br/json/last/USD-BRL", nil)
 	if err != nil {
-		return exchange, err
+		return nil, err
 	}
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return exchange, err
+		return nil, err
 	}
 	defer response.Body.Close()
 
 	responseJson, err := io.ReadAll(response.Body)
 	if err != nil {
-		return exchange, err
+		return nil, err
 	}
 
 	json.Unmarshal(responseJson, &exchange)
 
-	select {
-	case <-time.After(getCurrentRateTimeout):
-		return exchange, nil
-
-	case <-ctx.Done():
-		return exchange, ctx.Err()
-	}
+	return &exchange, nil
 }
 
 func insertRate(ctx context.Context, rate *Rate) error {
